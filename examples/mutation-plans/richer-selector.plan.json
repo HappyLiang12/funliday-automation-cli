@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "description": "Selector demonstration plan",
+  "tripId": "demo_trip_id",
+  "operations": [
+    {
+      "type": "deletePois",
+      "selector": {
+        "all": [
+          { "daySequence": 1 },
+          { "nameStartsWith": "Demo" }
+        ],
+        "first": true
+      },
+      "required": false
+    }
+  ]
+}
+

@@ -1,0 +1,57 @@
+{
+  "name": "funliday-automation-cli",
+  "version": "0.1.0",
+  "description": "Unofficial CLI and library for Funliday automation through browser-session auth and mutation plans.",
+  "author": "HappyLiang12",
+  "license": "Apache-2.0",
+  "private": false,
+  "type": "commonjs",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./api": "./src/api/client.js",
+    "./browser-session": "./src/auth/browser-session.js",
+    "./env-auth": "./src/auth/env-auth.js",
+    "./mutation-runner": "./src/plan/mutation-runner.js",
+    "./plan-validator": "./src/plan/validator.js",
+    "./selector": "./src/plan/selector.js"
+  },
+  "bin": {
+    "funliday": "bin/funliday.js",
+    "funliday-trip": "bin/funliday-trip.js",
+    "funliday-mutate": "bin/funliday-mutate.js",
+    "funliday-plan-validate": "bin/funliday-plan-validate.js",
+    "funliday-api": "bin/funliday-api.js",
+    "funliday-poibank": "bin/funliday-poibank.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "smoke:help": "node ./bin/funliday.js --help",
+    "validate:examples": "node ./bin/funliday-plan-validate.js ./examples/mutation-plans/read-trip-verify.plan.json ./artifacts/examples/read-trip-verify.validation.json && node ./bin/funliday-plan-validate.js ./examples/mutation-plans/richer-selector.plan.json ./artifacts/examples/richer-selector.validation.json"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HappyLiang12/funliday-automation-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/HappyLiang12/funliday-automation-cli/issues"
+  },
+  "homepage": "https://github.com/HappyLiang12/funliday-automation-cli#readme",
+  "keywords": [
+    "funliday",
+    "playwright",
+    "cli",
+    "automation",
+    "travel",
+    "mutation-plan",
+    "agent-tooling"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "playwright": "^1.59.1"
+  }
+}
+
+

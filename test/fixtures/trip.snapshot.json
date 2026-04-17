@@ -1,0 +1,31 @@
+{
+  "revision": "100",
+  "totalCount": "2",
+  "pois": [
+    {
+      "_id": "poi-1",
+      "name": "Demo Breakfast",
+      "daySequence": 1,
+      "poiSequenceIndex": 10,
+      "startTime": "0900",
+      "customizeStartTime": "32400",
+      "stayTime": "3600",
+      "address": "Demo Street 1",
+      "location": { "lat": 1.1, "lng": 2.2 },
+      "textNote": { "_id": "note-1", "text": "hello" }
+    },
+    {
+      "_id": "poi-2",
+      "name": "Demo Museum",
+      "daySequence": 1,
+      "poiSequenceIndex": 11,
+      "startTime": "1100",
+      "customizeStartTime": "39600",
+      "stayTime": "5400",
+      "address": "Demo Street 2",
+      "location": { "lat": 3.3, "lng": 4.4 },
+      "textNote": null
+    }
+  ]
+}
+

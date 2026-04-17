@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/funliday-automation-cli/mutation-plan.schema.json",
+  "title": "Funliday Mutation Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tripId", "operations"],
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "description": { "type": "string" },
+    "tripId": { "type": "string", "minLength": 1 },
+    "endpoint": { "type": "string" },
+    "outputPath": { "type": "string" },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/operation" }
+    }
+  },
+  "$defs": {
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lat", "lng"],
+      "properties": {
+        "lat": { "type": "number" },
+        "lng": { "type": "number" }
+      }
+    },
+    "selector": {
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "alias": { "type": "string" },
+            "id": { "type": "string" },
+            "idIn": { "type": "array", "items": { "type": "string" } },
+            "name": { "type": "string" },
+            "nameIn": { "type": "array", "items": { "type": "string" } },
+            "nameContains": { "type": "string" },
+            "nameStartsWith": { "type": "string" },
+            "nameEndsWith": { "type": "string" },
+            "nameRegex": { "type": "string" },
+            "nameRegexFlags": { "type": "string" },
+            "address": { "type": "string" },
+            "addressContains": { "type": "string" },
+            "addressStartsWith": { "type": "string" },
+            "addressEndsWith": { "type": "string" },
+            "addressRegex": { "type": "string" },
+            "addressRegexFlags": { "type": "string" },
+            "daySequence": { "type": "integer" },
+            "daySequenceIn": { "type": "array", "items": { "type": "integer" } },
+            "seq": { "type": "integer" },
+            "seqGte": { "type": "integer" },
+            "seqLte": { "type": "integer" },
+            "startTime": { "type": ["string", "integer"] },
+            "startTimeGte": { "type": ["string", "integer"] },
+            "startTimeLte": { "type": ["string", "integer"] },
+            "customizeStartTime": { "type": ["string", "integer"] },
+            "stayTime": { "type": ["string", "integer"] },
+            "stayTimeGte": { "type": ["string", "integer"] },
+            "stayTimeLte": { "type": ["string", "integer"] },
+            "hasNote": { "type": "boolean" },
+            "first": { "type": "boolean" },
+            "last": { "type": "boolean" },
+            "nth": { "type": "integer", "minimum": 0 },
+            "limit": { "type": "integer", "minimum": 1 },
+            "all": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
+            "any": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
+            "not": { "$ref": "#/$defs/selector" }
+          }
+        }
+      ]
+    },
+    "poiPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "address", "location", "stayTime"],
+      "properties": {
+        "name": { "type": "string" },
+        "address": { "type": "string" },
+        "location": { "$ref": "#/$defs/location" },
+        "stayTime": { "type": ["string", "integer"] }
+      }
+    },
+    "operation": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "readTrip",
+            "assertDayOrder",
+            "deletePois",
+            "addCustomPoi",
+            "updatePoiStartTime",
+            "postNote",
+            "rebuildDaySegmentInOrder"
+          ]
+        },
+        "saveAs": { "type": "string" },
+        "daySequence": { "type": "integer" },
+        "mode": { "type": "string", "enum": ["tail", "exact"] },
+        "subsequence": { "type": "boolean" },
+        "expectedNames": { "type": "array", "items": { "type": "string" } },
+        "ids": { "type": "array", "items": { "type": "string" } },
+        "selector": { "$ref": "#/$defs/selector" },
+        "selectors": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
+        "required": { "type": "boolean" },
+        "alias": { "type": "string" },
+        "name": { "type": "string" },
+        "customizeStartTime": { "type": ["string", "integer"] },
+        "stayTime": { "type": ["string", "integer"] },
+        "textNote": { "type": "string" },
+        "copyFrom": { "$ref": "#/$defs/selector" },
+        "verifyMode": { "type": "string", "enum": ["tail", "exact"] },
+        "force": { "type": "boolean" },
+        "poi": { "$ref": "#/$defs/poiPayload" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "alias": { "type": "string" },
+              "key": { "type": "string" },
+              "name": { "type": "string" },
+              "selector": { "$ref": "#/$defs/selector" },
+              "fallbackPoi": { "$ref": "#/$defs/poiPayload" },
+              "required": { "type": "boolean" },
+              "preserveNote": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+

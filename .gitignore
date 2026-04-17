@@ -1,0 +1,11 @@
+node_modules/
+artifacts/
+*.log
+*.db
+*.yml
+funliday_cookies.json
+.env
+.env.*
+coverage/
+.DS_Store
+

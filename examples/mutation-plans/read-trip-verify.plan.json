@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "description": "Read a demo trip and verify one day order",
+  "tripId": "demo_trip_id",
+  "operations": [
+    {
+      "type": "readTrip",
+      "saveAs": "before"
+    },
+    {
+      "type": "assertDayOrder",
+      "daySequence": 1,
+      "mode": "tail",
+      "expectedNames": [
+        "Demo Breakfast",
+        "Demo Museum"
+      ]
+    }
+  ]
+}
+
