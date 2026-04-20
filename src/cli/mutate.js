@@ -20,6 +20,7 @@ function parseMutateArgs(argv) {
   let validateOnly = false;
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
+    if (['help', '--help', '-h'].includes(arg)) return { subcommand: 'help' };
     if (arg === '--dry-run') { dryRun = true; continue; }
     if (arg === '--validate-only') { validateOnly = true; continue; }
     if (!planPath) { planPath = arg; continue; }

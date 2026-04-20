@@ -37,6 +37,9 @@ async function runApiCli(argv) {
       auth = await extractFunlidayAuth(session.page);
     }
     const body = JSON.parse(parsed.bodyJson);
+    if (auth.deviceId && body.deviceId === undefined) {
+      body.deviceId = auth.deviceId;
+    }
     const response = await callFunlidayApi({ auth, apiName: parsed.apiName, body });
     const outputPath = parsed.outputPath || resolveArtifactPath('active', 'call_funliday_api_output.json');
     const payload = {

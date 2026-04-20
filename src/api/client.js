@@ -400,10 +400,35 @@ async function searchPoibank({ auth, keyword, limit = 10, offset = 0 }) {
     },
   });
 
+  const text = await res.text();
+
+  if (res.status !== 200) {
+    throw new FunlidayCliError(
+      'POIBANK_API_ERROR',
+      `Poibank search failed: HTTP ${res.status} / ${text.slice(0, 500)}`,
+      { httpStatus: res.status, responseText: text.slice(0, 500) },
+    );
+  }
+
+  let data = null;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    // not JSON
+  }
+
+  if (data && data.code !== undefined && data.code !== 1) {
+    throw new FunlidayCliError(
+      'POIBANK_API_ERROR',
+      `Poibank search failed: code ${data.code} / ${data.code_message || text.slice(0, 500)}`,
+      { code: data.code, codeMessage: data.code_message, responseText: text.slice(0, 500) },
+    );
+  }
+
   return {
     url,
     status: res.status,
-    text: await res.text(),
+    text,
   };
 }
 
