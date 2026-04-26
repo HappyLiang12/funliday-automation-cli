@@ -1,10 +1,10 @@
 const { searchPoibank } = require('../api/client');
 const { ensureFunlidaySessionPage, extractFunlidayAuth } = require('../auth/browser-session');
 const { resolveArtifactPath, writeJson } = require('../io/paths');
-const { parseCommonFlags, resolveAuthInput } = require('./shared');
+const { parseCommonFlags, resolveAuthInput, printCliSuccess } = require('./shared');
 
 function printPoibankUsage() {
-  console.log('Usage: funliday-poibank <keyword> [--output <file>] [--endpoint <url>] [--auth-file <file> | --env-auth]');
+  console.log('Usage: funliday-poibank <keyword> [--output <file>] [--endpoint <url>] [--auth-file <file> | --env-auth] [--quiet]');
 }
 
 function parsePoibankArgs(argv) {
@@ -16,6 +16,8 @@ function parsePoibankArgs(argv) {
     outputPath: common.outputPath,
     authFile: common.authFile,
     useEnvAuth: common.useEnvAuth,
+    quiet: common.quiet,
+    debug: common.debug,
     keyword: rest[0] || 'demo keyword',
   };
 }
@@ -47,6 +49,11 @@ async function runPoibankCli(argv) {
       ...result,
     };
     writeJson(outputPath, payload);
+    const count = Array.isArray(result.results) ? result.results.length
+      : Array.isArray(result.pois) ? result.pois.length
+      : Array.isArray(result.data) ? result.data.length
+      : 'unknown';
+    printCliSuccess(`OK: poibank "${parsed.keyword}" → ${count} results → ${outputPath}`, { quiet: parsed.quiet });
     return payload;
   } finally {
     if (browser) await browser.close();
@@ -58,4 +65,3 @@ module.exports = {
   printPoibankUsage,
   runPoibankCli,
 };
-

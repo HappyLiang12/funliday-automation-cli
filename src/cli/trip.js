@@ -1,10 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const { ensureFunlidaySessionPage, extractFunlidayAuth, DEFAULT_CDP_ENDPOINT } = require('../auth/browser-session');
-const { createTrip, getTripContainer, updateTrip, formatTripDateForApi } = require('../api/client');
+const { createTrip, getTripContainer, getTrip, updateTrip, formatTripDateForApi } = require('../api/client');
 const { resolveArtifactPath, writeJson } = require('../io/paths');
 const { createExecutionReview, summarizeExecutionReviews } = require('../observability/execution-review');
-const { parseCommonFlags, resolveAuthInput } = require('./shared');
+const { parseCommonFlags, resolveAuthInput, printCliSuccess } = require('./shared');
 
 const TRIP_TYPE_ALIASES = {
   '1': '1', '2': '2', '3': '3', '4': '4',
@@ -15,7 +15,7 @@ const TRIP_TYPE_ALIASES = {
 };
 
 function printTripUsage() {
-  console.log(`Funliday Trip CLI\n\nUsage:\n  funliday-trip get --trip-id <tripId> [--output <file>] [--endpoint <url>] [--auth-file <file> | --env-auth]\n  funliday-trip create --name <name> --city-id <cityId> --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD> --trip-type <1/2/3/4/friends> [--output <file>]\n  funliday-trip update --trip-id <tripId> [--name <name>] [--start-date <YYYY-MM-DD>] [--end-date <YYYY-MM-DD>] [--trip-type <1/2/3/4/friends>] [--city-id <cityId>] [--output <file>]\n\nPayload shortcuts:\n  --json '{"tripId":"...","name":"..."}'\n  --file path\\to\\payload.json`);
+  console.log(`Funliday Trip CLI\n\nUsage:\n  funliday-trip get --trip-id <tripId> [--summary] [--pois] [--output <file>] [--endpoint <url>] [--auth-file <file> | --env-auth] [--quiet]\n  funliday-trip create --name <name> --city-id <cityId> --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD> --trip-type <1/2/3/4/friends> [--output <file>] [--quiet]\n  funliday-trip update --trip-id <tripId> [--name <name>] [--start-date <YYYY-MM-DD>] [--end-date <YYYY-MM-DD>] [--trip-type <1/2/3/4/friends>] [--city-id <cityId>] [--output <file>] [--quiet]\n\nFlags:\n  --summary    write only the essential trip summary (no raw container)\n  --pois       include the POI list (id, name, daySequence, seq, startTime, stayTime, address)\n\nPayload shortcuts:\n  --json '{"tripId":"...","name":"..."}'\n  --file path\\to\\payload.json`);
 }
 
 function normalizeTripType(value) {
@@ -78,6 +78,20 @@ function defaultOutputPath(command) {
   return resolveArtifactPath('active', `funliday_trip_cli_${command}_output.json`);
 }
 
+function slimPoi(poi) {
+  return {
+    id: poi._id,
+    name: poi.name,
+    daySequence: Number(poi.daySequence),
+    seq: poi.poiSequenceIndex,
+    startTime: poi.startTime || null,
+    customizeStartTime: poi.customizeStartTime || null,
+    stayTime: poi.stayTime || null,
+    address: poi.address || '',
+    hasNote: Boolean(poi.textNote),
+  };
+}
+
 function parseTripArgs(argv) {
   const command = argv[0];
   if (!command || ['help', '--help', '-h'].includes(command)) return { command: 'help' };
@@ -88,6 +102,10 @@ function parseTripArgs(argv) {
     outputPath: common.outputPath,
     authFile: common.authFile,
     useEnvAuth: common.useEnvAuth,
+    quiet: common.quiet,
+    debug: common.debug,
+    summaryOnly: false,
+    includePois: false,
     jsonText: '',
     filePath: '',
     name: '',
@@ -108,6 +126,8 @@ function parseTripArgs(argv) {
     if (arg === '--end-date') { options.endDate = rest[index + 1] || options.endDate; index += 1; continue; }
     if (arg === '--trip-type') { options.tripType = rest[index + 1] || options.tripType; index += 1; continue; }
     if (arg === '--city-id') { const raw = rest[index + 1] || ''; options.cityIds.push(...raw.split(',').map((item) => item.trim()).filter(Boolean)); index += 1; continue; }
+    if (arg === '--summary') { options.summaryOnly = true; continue; }
+    if (arg === '--pois') { options.includePois = true; continue; }
     throw new Error(`Unknown argument: ${arg}`);
   }
 
@@ -126,6 +146,23 @@ async function resolveAuth(parsed) {
   if (explicitAuth) return { auth: explicitAuth, browser: null };
   const session = await ensureFunlidaySessionPage({ endpoint: parsed.endpoint });
   return { auth: await extractFunlidayAuth(session.page), browser: session.browser };
+}
+
+function buildSummaryLine(command, result) {
+  if (command === 'get') {
+    const s = result.summary || {};
+    const poiCount = result.pois ? ` · ${result.pois.length} POIs` : '';
+    return `OK: ${s.name || s.tripId || 'trip'} (${s.dateStart}–${s.dateEnd}, type ${s.tripType})${poiCount}`;
+  }
+  if (command === 'create') {
+    const s = result.summary || {};
+    return `OK: created "${s.name}" (${s.tripId})`;
+  }
+  if (command === 'update') {
+    const s = result.summary || {};
+    return `OK: updated "${s.name}" (${s.tripId})`;
+  }
+  return 'OK';
 }
 
 async function runTripCli(argv) {
@@ -154,7 +191,21 @@ async function runTripCli(argv) {
     if (parsed.command === 'get') {
       const tripId = parsed.tripId || payload.tripId || payload.id || '';
       if (!tripId) throw new Error('get requires `--trip-id` or payload.tripId.');
-      result = await getTripContainer({ auth, tripId });
+      const containerResult = await getTripContainer({ auth, tripId });
+      result = { ...containerResult };
+      if (parsed.includePois) {
+        const tripPois = await getTrip({ auth, tripId });
+        result.pois = (tripPois.pois || []).map(slimPoi);
+        result.revision = tripPois.revision;
+        result.totalCount = tripPois.totalCount;
+      }
+      if (parsed.summaryOnly) {
+        result = {
+          tripId: containerResult.tripId,
+          summary: containerResult.summary,
+          ...(result.pois ? { pois: result.pois, revision: result.revision, totalCount: result.totalCount } : {}),
+        };
+      }
       resolvedPayload = { tripId };
       addReview({ domain: 'funliday-trip-cli', operation: 'getTripContainer', ok: true, context: { tripId, summary: result.summary }, signals: { sharedHelperUsed: true } });
     }
@@ -188,6 +239,7 @@ async function runTripCli(argv) {
       executionReviewSummary: summarizeExecutionReviews(reviews),
     };
     writeJson(outputPath, finalOutput);
+    printCliSuccess(`${buildSummaryLine(parsed.command, result)} → ${outputPath}`, { quiet: parsed.quiet });
     return finalOutput;
   } catch (error) {
     addReview({ domain: 'funliday-trip-cli', operation: parsed.command, ok: false, error, context: { endpoint: parsed.endpoint }, signals: { sharedHelperUsed: true, manualFollowUp: true } });
@@ -209,7 +261,7 @@ module.exports = {
   mergeUpdatePayload,
   ensureCreatePayload,
   readPayloadFromInput,
+  slimPoi,
+  buildSummaryLine,
   runTripCli,
 };
-
-

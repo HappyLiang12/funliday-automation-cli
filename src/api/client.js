@@ -203,7 +203,6 @@ async function getTripContainer({ auth, tripId, log }) {
     tripId,
     container: result.data.data,
     summary: summarizeTripContainer(result.data.data),
-    response: result.data,
   };
 }
 

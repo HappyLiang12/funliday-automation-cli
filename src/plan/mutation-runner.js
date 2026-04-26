@@ -446,6 +446,10 @@ async function resolveAuth({ auth, endpoint }) {
   return { auth: browserAuth, browser };
 }
 
+function isOfflineDryRun(plan, dryRun) {
+  return Boolean(dryRun && plan && plan.tripSnapshot && Array.isArray(plan.tripSnapshot.pois));
+}
+
 async function runMutationPlan({ plan, endpoint = DEFAULT_CDP_ENDPOINT, dryRun = false, outputPath, auth, adapters = {} } = {}) {
   const validation = validateMutationPlan(plan);
   if (!validation.ok) {
@@ -454,7 +458,8 @@ async function runMutationPlan({ plan, endpoint = DEFAULT_CDP_ENDPOINT, dryRun =
   }
 
   const { logs, log } = createLogger();
-  const resolved = await resolveAuth({ auth, endpoint: plan.endpoint || endpoint });
+  const offline = isOfflineDryRun(plan, dryRun);
+  const resolved = offline ? { auth: { cookie: 'offline', authorization: 'Bearer offline', deviceId: 'offline', language: 'zh_tw' } } : await resolveAuth({ auth, endpoint: plan.endpoint || endpoint });
   const state = {
     auth: resolved.auth || resolved,
     tripId: plan.tripId,
@@ -480,7 +485,11 @@ async function runMutationPlan({ plan, endpoint = DEFAULT_CDP_ENDPOINT, dryRun =
   let currentOperation = null;
   let browser = resolved.browser || null;
   try {
-    state.trip = await state.adapters.getTrip({ auth: state.auth, tripId: state.tripId, log: state.log });
+    if (offline) {
+      state.trip = clone(plan.tripSnapshot);
+    } else {
+      state.trip = await state.adapters.getTrip({ auth: state.auth, tripId: state.tripId, log: state.log });
+    }
     if (state.dryRun) {
       state.trip = toTripLikeSummary(state.trip);
     }

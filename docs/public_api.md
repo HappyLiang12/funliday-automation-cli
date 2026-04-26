@@ -19,9 +19,9 @@ Direct subpath exports:
 
 ### API layer
 - `createTrip`
-- `getTripContainer`
+- `getTripContainer` — returns `{ tripId, container, summary }` (no `response` duplicate as of v0.2)
 - `updateTrip`
-- `getTrip`
+- `getTrip` — returns the POI list under `results`
 - `deletePois`
 - `addCustomPoi`
 - `updatePoiStartTime`
@@ -30,23 +30,46 @@ Direct subpath exports:
 - `searchPoibank`
 
 ### Auth layer
-- `ensureFunlidaySessionPage`
-- `extractFunlidayAuth`
+- `ensureFunlidaySessionPage` — throws `FunlidayCliError('CDP_UNREACHABLE' | 'CDP_CONNECT_FAILED')` on failure
+- `extractFunlidayAuth` — throws `FunlidayCliError('NOT_LOGGED_IN')` if no session is found
 - `readAuthFromEnv`
 - `readAuthFromFile`
 
 ### Plan layer
 - `validateMutationPlan`
-- `runMutationPlan`
+- `runMutationPlan` — accepts `plan.tripSnapshot` for offline dry-run
 - `findPois`
 - `resolveSinglePoi`
+
+## `funliday-api` body shapes
+
+The CLI is a thin pass-through to the Funliday private API. **Trip-targeting endpoints expect `parseTripObjectId`, not `tripId`.** The CLI will silently rewrite `tripId → parseTripObjectId` for the endpoints listed below; for other endpoints, you must use the exact field name the server expects.
+
+| `apiName` | Required body fields | Notes |
+|---|---|---|
+| `getPoisOfTrip` | `parseTripObjectId`, `deviceId` | `deviceId` auto-injected from auth. |
+| `deletePois` | `parseTripObjectId`, `idArray`, `revision`, `deviceId` | `revision` from a prior `getPoisOfTrip`. |
+| `addPoi` | `parseTripObjectId`, `daySequence`, `revision`, `name`, `address`, `location`, `stayTime`, `transportationType`, `addToCollections`, `dataSource`, `infoForPoiBank` | Use the `addCustomPoi` library helper or `funliday-mutate` instead — building this body by hand is fragile. |
+| `updatePoiStartTime` | `parseTripObjectId`, `id` (poiId), `revision`, `customizeStartTime`, `stayTime` | |
+| `getTextNote` | `parseTripObjectId`, `poiId` | |
+| `postTextNote` | `parseTripObjectId`, `poiId`, `text` | Optional `textNoteObjectId` to update an existing note. |
+
+If a call returns `HTTP 200 / "status":"000" / "message":"ErrorCodeUnknown"`, the most likely cause is a missing or misnamed body field. Run with `--debug` to see the request/response trace.
 
 ## Safe read-only workflows
 
 Safest operations to use first:
 
-- `funliday-plan-validate`
-- `funliday-trip get`
-- `funliday-api getPoisOfTrip ...`
+- `funliday-plan-validate plan.json`
+- `funliday-trip get --trip-id <id> --summary --pois`
+- `funliday-api getPoisOfTrip '{"tripId":"..."}'` (with auto-rewrite)
 - selector tests against fixture data
 
+## Output stability
+
+| Output | Stable? |
+|---|---|
+| `summary` field shape on `funliday-trip get` | Yes |
+| `pois[]` field shape on `funliday-trip get --pois` | Yes (slim form: `id, name, daySequence, seq, startTime, customizeStartTime, stayTime, address, hasNote`) |
+| `container` field (raw upstream payload) | No — passes through whatever Funliday returns |
+| `executionReviewSummary` | Internal; do not parse in agents |

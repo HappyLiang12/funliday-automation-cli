@@ -10,8 +10,6 @@ Unofficial Apache-2.0 licensed CLI and library for automating Funliday workflows
 
 ## What this package is
 
-This package provides:
-
 - a reusable API layer for common Funliday operations
 - a mutation-plan runner for repeatable itinerary changes
 - a selector DSL for targeting POIs safely
@@ -23,9 +21,9 @@ This package provides:
 - agent/LLM workflows that need a stable CLI surface
 - advanced users who already understand browser-session based auth
 
-## Install
+If you are an AI agent, also read `SKILL.md` — it has a condensed install + usage cheatsheet.
 
-Clone the repository first, then install dependencies:
+## Install
 
 ```bash
 git clone https://github.com/HappyLiang12/funliday-automation-cli.git
@@ -33,74 +31,110 @@ cd funliday-automation-cli
 npm install
 ```
 
-## Auth model
+## Auth — quick start
 
-This package currently supports two practical auth paths:
+The default and recommended mode is **browser-session**: the CLI attaches to a running Chrome instance over CDP and reuses your logged-in session.
 
-1. **browser-session mode**
-   - connect to an already logged-in Chromium/Chrome session through CDP
-2. **explicit auth mode**
-   - pass an auth JSON file or use environment variables
+1. Close all running Chrome windows.
+2. Launch Chrome with CDP enabled and a dedicated profile:
+   ```bash
+   # macOS
+   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+     --remote-debugging-port=9333 \
+     --user-data-dir="$HOME/chrome-funliday" \
+     https://www.funliday.com
+   ```
+   (See `docs/auth_models.md` for Windows / Linux equivalents.)
+3. Log in to Funliday in that Chrome window once.
+4. Verify CDP is reachable: `curl http://127.0.0.1:9333/json/version`
+5. Run any CLI command.
 
-Default browser-session endpoint:
-
-- `http://127.0.0.1:9333`
-
-Override with:
-
-- `FUNLIDAY_CDP_ENDPOINT`
-- `--endpoint <url>`
+For headless / CI use, pass `--auth-file ./auth.json` or `--env-auth` instead.
 
 ## Quick start
 
 ### Validate a mutation plan
-
 ```bash
 npx funliday-plan-validate ./examples/mutation-plans/read-trip-verify.plan.json
+# Valid plan: .../read-trip-verify.plan.json → ./artifacts/...validation.json
 ```
 
-### Run a mutation plan
-
+### Read a trip (slim summary + POI list)
 ```bash
-npx funliday-mutate run ./examples/mutation-plans/read-trip-verify.plan.json
+npx funliday-trip get --trip-id <tripId> --summary --pois
+# OK: <name> (<dateStart>–<dateEnd>, type 3) · 9 POIs → ./artifacts/active/funliday_trip_cli_get_output.json
 ```
 
-### Read a trip container
+Drop `--summary` to also include the raw `container` payload; drop `--pois` to skip the per-POI list.
 
+### Dry-run a plan offline (no auth, no network)
 ```bash
-npx funliday-trip get --trip-id demo_trip_id --auth-file ./examples/auth.demo.json
+# 1. Save a snapshot once
+npx funliday-api getPoisOfTrip '{"tripId":"<tripId>"}' --output snapshot.json
+
+# 2. Iterate on plans without hitting the network
+npx funliday-mutate run plan.json --dry-run --trip-snapshot snapshot.json
+# OK [DRY-RUN(offline)]: 6/6 operations → ./artifacts/...output.json
+```
+
+### Run a mutation plan live
+```bash
+npx funliday-mutate run plan.json
+# OK [LIVE]: 6/6 operations → ./artifacts/...output.json
 ```
 
 ### Search Poibank
-
 ```bash
-npx funliday-poibank "demo keyword" --auth-file ./examples/auth.demo.json
+npx funliday-poibank "上海 蟹粉" --output ./artifacts/poibank.json
+# OK: poibank "上海 蟹粉" → 10 results → ./artifacts/poibank.json
 ```
+
+### Call a raw API endpoint
+```bash
+npx funliday-api getPoisOfTrip '{"tripId":"<tripId>"}'
+# OK: api getPoisOfTrip (status=200) [auto: tripId -> parseTripObjectId] → ./artifacts/active/...
+```
+The CLI auto-rewrites `tripId → parseTripObjectId` for known trip-targeting endpoints. See `docs/public_api.md` for the full body-shape table.
 
 ## Public CLI commands
 
-- `funliday`
-- `funliday-trip`
-- `funliday-mutate`
-- `funliday-plan-validate`
-- `funliday-api`
-- `funliday-poibank`
+- `funliday` — combined dispatcher
+- `funliday-trip` — get / create / update trips
+- `funliday-mutate` — run / validate mutation plans
+- `funliday-plan-validate` — alias for `funliday-mutate validate`
+- `funliday-api` — raw POST to a named Funliday endpoint
+- `funliday-poibank` — POI bank search
 
-See:
+### Global flags (every command)
+- `--quiet`, `-q` — suppress the one-line success summary
+- `--debug` — print full stack traces on error (otherwise a single `Error [CODE]: <message>` line)
+- `--endpoint <url>` — override CDP endpoint (default `http://127.0.0.1:9333`)
+- `--output <file>` — override the artifact path
+- `--auth-file <file>` / `--env-auth` — explicit auth instead of CDP
 
-- `docs/public_api.md`
-- `docs/auth_models.md`
-- `docs/selector_dsl.md`
-- `docs/plan_schema.md`
-- `docs/dry_run_limitations.md`
+## Output and exit codes
+
+- Every successful command prints **one line** to stdout summarizing what happened, plus the path to the JSON artifact. Use `--quiet` for purely machine-readable runs.
+- Errors print a single `Error [CODE]: <message>` line to stderr (plus a remediation hint when one is known) and exit with code `1`. Use `--debug` to see the full stack.
+- Mutating commands always write a structured JSON artifact even when they fail; `ok: false` and `error` fields are populated.
+
+## Docs
+
+- `docs/auth_models.md` — browser-session setup, troubleshooting, env-var reference
+- `docs/public_api.md` — library exports + per-endpoint body shapes for `funliday-api`
+- `docs/dry_run_limitations.md` — online vs offline dry-run, snapshot format
+- `docs/plan_schema.md` — mutation plan schema
+- `docs/selector_dsl.md` — POI selector DSL
+- `SKILL.md` — agent cheatsheet (install + common flows)
 
 ## Stable vs experimental
 
-### Stable-ish
+### Stable
 - plan validation
 - selector matching
-- trip metadata CLI structure
+- trip metadata CLI structure (`summary`, `pois[]` slim form)
 - browser-session auth extraction pattern
+- error code surface (`CDP_UNREACHABLE`, `NOT_LOGGED_IN`, `AUTH_REQUIRED`, `FUNLIDAY_API_ERROR`)
 
 ### Experimental
 - private / undocumented API assumptions
@@ -109,21 +143,15 @@ See:
 
 ## Safety notes
 
-- do not commit cookies, tokens, signed URLs, or generated artifacts
+- do not commit cookies, tokens, signed URLs, or generated artifacts (the `artifacts/` directory is gitignored)
 - use sanitized demo payloads only in public examples
-- prefer validation first, then dry-run or live execution
+- prefer `--trip-snapshot` offline dry-run, then online dry-run, then live
 - prefer a throwaway/demo account or a non-critical trip when testing new live mutations
-
-## Repository status
-
-- current release stage: **experimental but functional**
-- good fit for: local power users, engineers, and agent workflows
-- not yet optimized for: guaranteed long-term API stability or official Funliday support
 
 ## Development
 
 ```bash
-npm test
+npm test                 # node:test unit tests
 npm run validate:examples
 npm run smoke:help
 ```
@@ -131,5 +159,3 @@ npm run smoke:help
 ## License
 
 Apache-2.0. See `LICENSE`.
-
-

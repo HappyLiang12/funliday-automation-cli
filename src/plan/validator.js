@@ -1,4 +1,4 @@
-const ALLOWED_TOP_LEVEL_FIELDS = new Set(['version', 'description', 'tripId', 'endpoint', 'outputPath', 'operations']);
+const ALLOWED_TOP_LEVEL_FIELDS = new Set(['version', 'description', 'tripId', 'endpoint', 'outputPath', 'operations', 'tripSnapshot']);
 const SELECTOR_LEAF_FIELDS = new Set([
   'alias', 'id', 'idIn', 'name', 'nameIn', 'nameContains', 'nameStartsWith', 'nameEndsWith', 'nameRegex', 'nameRegexFlags',
   'address', 'addressContains', 'addressStartsWith', 'addressEndsWith', 'addressRegex', 'addressRegexFlags',
