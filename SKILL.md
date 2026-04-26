@@ -14,7 +14,12 @@ Node ≥ 20 required.
 
 ## How auth actually works
 
-Two paths. **Pick one** before doing anything else.
+Two paths. **Pick one** based on whether your runtime can run a desktop browser.
+
+| You are running… | Use |
+|---|---|
+| Locally on a developer machine with Chrome | Path A (browser-session) |
+| In a sandbox (OpenClaw, Hermes), CI runner, or any headless env | Path B (explicit auth) |
 
 ### Path A — browser-session (interactive, default)
 
@@ -34,16 +39,37 @@ curl -s http://127.0.0.1:9333/json/version   # should return JSON
 
 If `--remote-debugging-port` "doesn't work", it's almost always because Chrome was already running. There is no error — Chrome silently re-uses the existing session and skips opening the CDP port.
 
-### Path B — explicit auth (CI / agent automation)
+### Path B — explicit auth (sandboxed agents, CI)
 
+This path is split across two stages, because a sandbox cannot run a browser:
+
+**Stage 1 (one-time, on a machine with Chrome):**
 ```bash
-npx funliday-trip get --trip-id <id> --auth-file ./auth.json
-# or
-FUNLIDAY_COOKIE=... FUNLIDAY_AUTHORIZATION=... \
-  npx funliday-trip get --trip-id <id> --env-auth
+# After steps 1–3 of Path A above:
+npx funliday-auth export --output ./funliday-auth.json
+# OK [auth export]: wrote ./funliday-auth.json (fields: authorization, deviceId, language, cookie)
+
+# Verify end-to-end against a known trip:
+npx funliday-auth check --auth-file ./funliday-auth.json --trip-id <id>
+# OK [auth check]: member=... deviceId=present trip=... pois=9 → ...
 ```
 
-`auth.json` shape: `{ cookie, authorization, memberId, accessToken, deviceId, language, poibankToken, webToken }`. See `docs/auth_models.md` for which subset is required.
+**Stage 2 (in the sandbox):**
+```bash
+# Mount funliday-auth.json as a secret, then:
+npx funliday-trip get --trip-id <id> --auth-file ./funliday-auth.json --summary --pois --quiet
+npx funliday-mutate run plan.json --auth-file ./funliday-auth.json --quiet
+
+# Or via env vars (--env-auth):
+export FUNLIDAY_AUTHORIZATION="$(jq -r .authorization < funliday-auth.json)"
+export FUNLIDAY_COOKIE="$(jq -r .cookie         < funliday-auth.json)"
+export FUNLIDAY_DEVICE_ID="$(jq -r .deviceId    < funliday-auth.json)"
+npx funliday-trip get --trip-id <id> --env-auth
+```
+
+**When auth expires** the CLI exits 1 with `Error [AUTH_EXPIRED]:` on stderr. Detect that prefix and request a fresh export from Stage 1. Detection rules and a sample bash check loop are in `docs/agent_sandbox_setup.md`.
+
+The sandbox needs **no Chrome, no Playwright at runtime, no CDP port** — only outbound HTTPS to `funlidays.com` / `funliday.com` / `api.poibank.com`.
 
 ## Output contract (every command)
 
@@ -147,6 +173,7 @@ Selector grammar: `alias`, `id`/`idIn`, `name`/`nameContains`/`nameStartsWith`/`
 | `Error [CDP_UNREACHABLE]` | Chrome not running with CDP port | See "Path A" above. |
 | `Error [NOT_LOGGED_IN]` | Connected to Chrome but no Funliday session in that profile | Log in to Funliday in the Chrome window the CLI attached to. |
 | `Error [AUTH_FILE_NOT_FOUND]` | `--auth-file` path is wrong | Resolve relative to the *current working directory*, not the repo root. |
+| `Error [AUTH_EXPIRED]` | Funliday rejected the credentials (HTTP 401/403 or known error pattern) | Re-export auth from a logged-in browser: `funliday-auth export`. See `docs/agent_sandbox_setup.md` Stage 4. |
 | `customizeStartTime` ignored on UI | Funliday auto-recomputes `startTime` based on stay times. `customizeStartTime` is the user override; the UI shows whichever applies. | Set `customizeStartTime` only when you want to pin a specific time. |
 
 ## Safety
@@ -158,6 +185,7 @@ Selector grammar: `alias`, `id`/`idIn`, `name`/`nameContains`/`nameStartsWith`/`
 ## Where to dig deeper
 
 - `docs/auth_models.md` — auth modes + troubleshooting matrix
+- `docs/agent_sandbox_setup.md` — **start here if you're a sandboxed agent (OpenClaw, Hermes)**: split-stage extract-then-consume flow, secret transport, expiry handling
 - `docs/public_api.md` — library exports + per-endpoint body shapes
 - `docs/dry_run_limitations.md` — what dry-run does and does not simulate
 - `docs/plan_schema.md` / `docs/selector_dsl.md` — plan/selector grammar

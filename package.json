@@ -22,7 +22,8 @@
     "funliday-mutate": "bin/funliday-mutate.js",
     "funliday-plan-validate": "bin/funliday-plan-validate.js",
     "funliday-api": "bin/funliday-api.js",
-    "funliday-poibank": "bin/funliday-poibank.js"
+    "funliday-poibank": "bin/funliday-poibank.js",
+    "funliday-auth": "bin/funliday-auth.js"
   },
   "scripts": {
     "test": "node --test",

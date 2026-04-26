@@ -39,6 +39,24 @@ function ensureAuth(auth) {
   }
 }
 
+const AUTH_EXPIRED_PATTERN = /invalid access token|access token expired|token expired|unauthori[sz]ed|please log ?in|請重新登入|登入逾時|未登入/i;
+
+function looksLikeAuthExpired({ httpStatus, status, message, text }) {
+  if (httpStatus === 401 || httpStatus === 403) return true;
+  if (status === '401' || status === '403') return true;
+  const blob = `${message || ''} ${text || ''}`;
+  return AUTH_EXPIRED_PATTERN.test(blob);
+}
+
+function throwApiError({ apiName, route, httpStatus, status, message, text, code = 'FUNLIDAY_API_ERROR', label = apiName || route }) {
+  const expired = looksLikeAuthExpired({ httpStatus, status, message, text });
+  const errorCode = expired ? 'AUTH_EXPIRED' : code;
+  const detailMessage = expired
+    ? `${label} failed: auth appears expired (HTTP ${httpStatus} / ${status || 'NO_STATUS'} / ${(message || (text || '').slice(0, 200))}). Re-export auth.json from a logged-in browser.`
+    : `${label} failed: HTTP ${httpStatus} / ${status || 'NO_STATUS'} / ${message || (text || '').slice(0, 500)}`;
+  throw new FunlidayCliError(errorCode, detailMessage, { apiName: apiName || undefined, route: route || undefined, httpStatus, responseText: (text || '').slice(0, 500) });
+}
+
 async function callFunlidayApi({ auth, apiName, body, log }) {
   ensureAuth(auth);
 
@@ -74,11 +92,13 @@ async function callFunlidayApi({ auth, apiName, body, log }) {
   }
 
   if (res.status !== 200 || !data || data.status !== '200') {
-    throw new FunlidayCliError(
-      'FUNLIDAY_API_ERROR',
-      `${apiName} failed: HTTP ${res.status} / ${(data && data.status) || 'NO_STATUS'} / ${(data && data.message) || text.slice(0, 500)}`,
-      { apiName, httpStatus: res.status, responseText: text.slice(0, 500) },
-    );
+    throwApiError({
+      apiName,
+      httpStatus: res.status,
+      status: data && data.status,
+      message: data && data.message,
+      text,
+    });
   }
 
   return data;
@@ -124,11 +144,14 @@ async function callFunlidayNextFormApi({ auth, route, form, refererPath = '/me/t
   }
 
   if (res.status !== 200 || !data || data.success !== true) {
-    throw new FunlidayCliError(
-      'FUNLIDAY_NEXT_API_ERROR',
-      `${route} failed: HTTP ${res.status} / ${(data && data.success) || 'NO_SUCCESS'} / ${text.slice(0, 500)}`,
-      { route, httpStatus: res.status, responseText: text.slice(0, 500) },
-    );
+    throwApiError({
+      route,
+      httpStatus: res.status,
+      status: data && data.success === true ? '200' : (data && data.success === false ? 'success=false' : 'NO_SUCCESS'),
+      message: data && data.message,
+      text,
+      code: 'FUNLIDAY_NEXT_API_ERROR',
+    });
   }
 
   return {
@@ -173,10 +196,24 @@ async function callFunlidayNextApi({ auth, route, method = 'GET', refererPath = 
   }
 
   if (res.status !== 200) {
-    throw new FunlidayCliError('FUNLIDAY_NEXT_API_ERROR', `${route} failed: HTTP ${res.status} / ${text.slice(0, 500)}`);
+    throwApiError({
+      route,
+      httpStatus: res.status,
+      status: 'NO_STATUS',
+      message: data && data.message,
+      text,
+      code: 'FUNLIDAY_NEXT_API_ERROR',
+    });
   }
   if (data && data.success === false) {
-    throw new FunlidayCliError('FUNLIDAY_NEXT_API_ERROR', `${route} failed: success=false / ${text.slice(0, 500)}`);
+    throwApiError({
+      route,
+      httpStatus: res.status,
+      status: 'success=false',
+      message: data.message,
+      text,
+      code: 'FUNLIDAY_NEXT_API_ERROR',
+    });
   }
 
   return {
@@ -437,6 +474,7 @@ module.exports = {
   createLogger,
   formatTripDateForApi,
   summarizeTripContainer,
+  looksLikeAuthExpired,
   callFunlidayApi,
   callFunlidayNextApi,
   callFunlidayNextFormApi,

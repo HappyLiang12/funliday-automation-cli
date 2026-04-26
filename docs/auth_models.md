@@ -1,10 +1,17 @@
 # Auth Models
 
-`funliday-automation-cli` supports two practical auth paths.
+`funliday-automation-cli` supports two auth paths. They are designed for two different runtime environments.
+
+| Path | Best for | Needs Chrome? | Needs network? |
+|---|---|---|---|
+| **Browser-session** (default) | Local interactive use on a developer machine | Yes (with `--remote-debugging-port`) | Yes |
+| **Explicit auth** (`--auth-file` / `--env-auth`) | Sandboxed agents (OpenClaw, Hermes), CI runners, headless servers | **No** | Yes for live calls; **no** for offline dry-run |
+
+**For sandboxed agents**, see `docs/agent_sandbox_setup.md` — it walks through the full split-stage flow (extract on a dev machine, ship to sandbox, detect expiry).
 
 ---
 
-## 1. Browser-session mode (default, recommended)
+## 1. Browser-session mode
 
 The CLI attaches to an already-running Chrome instance over the Chrome DevTools Protocol (CDP) and extracts your logged-in Funliday session from `localStorage` and cookies.
 
@@ -48,7 +55,7 @@ The CLI attaches to an already-running Chrome instance over the Chrome DevTools 
 
 5. **Run any CLI command.** The CLI auto-detects the running Chrome.
    ```bash
-   npx funliday-trip get --trip-id <tripId> --summary
+   npx funliday-trip get --trip-id <tripId> --summary --pois
    ```
 
 ### Default endpoint
@@ -72,19 +79,70 @@ Override with:
 
 ## 2. Explicit auth mode
 
-Bypass Playwright entirely by feeding auth directly. Useful for CI / agent pipelines where running a headed Chrome is impractical.
+Use this for any environment that **cannot** run a desktop browser: CI, headless servers, sandboxed AI agents (OpenClaw, Hermes, etc.), serverless workers.
 
-### Auth file
+You feed auth into the CLI directly via either a JSON file (`--auth-file`) or environment variables (`--env-auth`). The CLI never touches Chrome / Playwright on this path.
+
+### 2a. Get the values: `funliday-auth export`
+
+The recommended way to produce the auth file is **on a developer machine** (which has Chrome) using the export subcommand:
 
 ```bash
-npx funliday-trip get --trip-id <tripId> --auth-file ./auth.json
+# Steps 1–3: same as browser-session mode above (launch Chrome with CDP, log in once).
+
+# Step 4: export self-contained auth.json
+npx funliday-auth export --output ./funliday-auth.json
+# OK [auth export]: wrote ./funliday-auth.json (fields: authorization, deviceId, language, cookie)
 ```
 
-`auth.json` shape (any subset works as long as `cookie` and `authorization` are derivable):
+Default output (minimum viable):
 
 ```json
 {
-  "cookie": "fld-webToken=...",
+  "authorization": "Bearer <memberId>_<accessToken>",
+  "deviceId": "<uuid>",
+  "language": "zh_tw",
+  "cookie": "fld-clientId=...; fld-webToken=...; fld-memberId=..."
+}
+```
+
+Useful flags:
+- `--include-cookie all` — keep the entire `document.cookie` (default `fld` keeps only Funliday cookies)
+- `--include-cookie none` — omit the `cookie` field (only safe for endpoints that don't require it)
+- `--include-tokens` — also write raw `memberId` / `accessToken` / `poibankToken` / `webToken`
+- `--print` — also write the JSON to stdout (pipe into a secret manager)
+- `--redact` — when used with `--print`, mask token values for safe inspection (logs, screenshots)
+
+The output file is `chmod 0600` on POSIX. On Windows, store it in a directory only your user can read.
+
+### 2b. Validate before shipping: `funliday-auth check`
+
+```bash
+# Structural check (no network)
+npx funliday-auth check --auth-file ./funliday-auth.json
+
+# End-to-end check against a known trip (cheap read-only call)
+npx funliday-auth check --auth-file ./funliday-auth.json --trip-id <tripId>
+# OK [auth check]: member=... deviceId=present trip=... pois=9 → ...
+```
+
+If credentials are stale, `check` returns `Error [AUTH_EXPIRED]:` — re-run the export.
+
+### 2c. Use the auth in any command
+
+```bash
+npx funliday-trip get --trip-id <id> --auth-file ./funliday-auth.json --summary --pois
+npx funliday-mutate run plan.json --auth-file ./funliday-auth.json
+npx funliday-poibank "<keyword>" --auth-file ./funliday-auth.json
+```
+
+### 2d. Manual / hand-built auth file
+
+If you cannot use `funliday-auth export` (e.g. extracting from someone else's browser via DevTools), the auth file accepts any subset that lets the CLI derive `authorization` + `cookie`:
+
+```json
+{
+  "cookie": "fld-clientId=...; fld-webToken=...; fld-memberId=...",
   "authorization": "Bearer <memberId>_<accessToken>",
   "memberId": "<memberId>",
   "accessToken": "<accessToken>",
@@ -97,11 +155,17 @@ npx funliday-trip get --trip-id <tripId> --auth-file ./auth.json
 
 If `authorization` is omitted, it is constructed automatically from `memberId + accessToken`, falling back to `webToken`.
 
-### Environment variables
+To extract by hand: open Chrome DevTools on `https://www.funliday.com` after logging in, then:
+- `cookie` → `document.cookie` (filter to `fld-*` entries)
+- `localStorage`: `fld-memberId`, `fld-accessToken`, `fld-poibankToken`, `fld-clientId` (= `deviceId`)
+
+### 2e. Environment variable mode
 
 ```bash
-npx funliday-trip get --trip-id <tripId> --env-auth
+npx funliday-trip get --trip-id <id> --env-auth
 ```
+
+Variables (set as many as your auth shape needs):
 
 - `FUNLIDAY_COOKIE`
 - `FUNLIDAY_AUTHORIZATION`
@@ -112,18 +176,31 @@ npx funliday-trip get --trip-id <tripId> --env-auth
 - `FUNLIDAY_WEB_TOKEN`
 - `FUNLIDAY_DEFAULT_LANGUAGE`
 
-### Where to get these values
+Pipe the export file into env vars (handy for sandboxes that prefer env over files):
 
-Open Chrome DevTools on `https://www.funliday.com`, then:
-- `cookie` → `document.cookie`
-- `localStorage`: `fld-memberId`, `fld-accessToken`, `fld-poibankToken`, `fld-clientId` (= deviceId)
+```bash
+export FUNLIDAY_AUTHORIZATION="$(jq -r .authorization < funliday-auth.json)"
+export FUNLIDAY_COOKIE="$(jq -r .cookie         < funliday-auth.json)"
+export FUNLIDAY_DEVICE_ID="$(jq -r .deviceId    < funliday-auth.json)"
+export FUNLIDAY_DEFAULT_LANGUAGE="$(jq -r .language < funliday-auth.json)"
+```
 
-For one-shot extraction, the simplest path is to run the CLI once in browser-session mode and copy what `funliday-trip get` writes — but **never commit these values**.
+### Common errors (explicit-auth mode)
+
+| Error code | What it means | Fix |
+|---|---|---|
+| `AUTH_REQUIRED` | The CLI needs auth but none was provided. | Pass `--auth-file <file>` or `--env-auth`. |
+| `AUTH_FILE_NOT_FOUND` | `--auth-file` path doesn't exist. | Resolve relative to the *current working directory*, not the repo root. |
+| `AUTH_EXPIRED` | Funliday rejected the credentials (HTTP 401/403 or matching error message). | Re-export from a logged-in browser: `funliday-auth export --output funliday-auth.json`. |
+| `FUNLIDAY_API_ERROR` (with `ErrorCodeUnknown`) | The body shape is wrong, not the auth. | See `docs/public_api.md` "funliday-api body shapes". |
 
 ---
 
 ## Recommendation
 
-- Local interactive use: **browser-session mode**.
-- CI / agent automation: **env-var mode** with secrets managed by your runner.
-- Plan development / offline review: **`--trip-snapshot`** with `funliday-mutate run --dry-run` (no auth or network needed). See `docs/dry_run_limitations.md`.
+| Use case | Mode |
+|---|---|
+| Local interactive | Browser-session |
+| Plan dev / offline review | Browser-session for the initial snapshot, then `--trip-snapshot` (no auth) for iteration |
+| CI pipeline | `--env-auth` with the runner's secret store |
+| **Sandboxed AI agent (OpenClaw, Hermes, …)** | **`--auth-file`** with the file mounted as a secret. See `docs/agent_sandbox_setup.md`. |

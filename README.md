@@ -33,7 +33,7 @@ npm install
 
 ## Auth — quick start
 
-The default and recommended mode is **browser-session**: the CLI attaches to a running Chrome instance over CDP and reuses your logged-in session.
+The default and recommended mode for **local interactive use** is **browser-session**: the CLI attaches to a running Chrome instance over CDP and reuses your logged-in session.
 
 1. Close all running Chrome windows.
 2. Launch Chrome with CDP enabled and a dedicated profile:
@@ -49,7 +49,20 @@ The default and recommended mode is **browser-session**: the CLI attaches to a r
 4. Verify CDP is reachable: `curl http://127.0.0.1:9333/json/version`
 5. Run any CLI command.
 
-For headless / CI use, pass `--auth-file ./auth.json` or `--env-auth` instead.
+For **sandboxed agents** (OpenClaw, Hermes, etc.) and **CI runners** that have no browser:
+
+```bash
+# On a developer machine that has Chrome (one-time, repeat on expiry):
+npx funliday-auth export --output ./funliday-auth.json
+
+# Verify:
+npx funliday-auth check --auth-file ./funliday-auth.json --trip-id <some-trip-id>
+
+# Ship funliday-auth.json into the sandbox as a secret, then:
+npx funliday-trip get --trip-id <id> --auth-file ./funliday-auth.json --summary --pois
+```
+
+The full split-stage flow, expiry detection, and threat model are in **`docs/agent_sandbox_setup.md`**.
 
 ## Quick start
 
@@ -99,6 +112,7 @@ The CLI auto-rewrites `tripId → parseTripObjectId` for known trip-targeting en
 ## Public CLI commands
 
 - `funliday` — combined dispatcher
+- `funliday-auth` — export auth.json for sandboxed/CI use; check current auth
 - `funliday-trip` — get / create / update trips
 - `funliday-mutate` — run / validate mutation plans
 - `funliday-plan-validate` — alias for `funliday-mutate validate`
@@ -121,6 +135,7 @@ The CLI auto-rewrites `tripId → parseTripObjectId` for known trip-targeting en
 ## Docs
 
 - `docs/auth_models.md` — browser-session setup, troubleshooting, env-var reference
+- `docs/agent_sandbox_setup.md` — **split-stage flow for sandboxed agents (OpenClaw, Hermes) and CI runners**
 - `docs/public_api.md` — library exports + per-endpoint body shapes for `funliday-api`
 - `docs/dry_run_limitations.md` — online vs offline dry-run, snapshot format
 - `docs/plan_schema.md` — mutation plan schema

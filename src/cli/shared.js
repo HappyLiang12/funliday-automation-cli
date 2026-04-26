@@ -73,6 +73,12 @@ function remediationFor(error) {
   if (error.code === 'AUTH_REQUIRED' || error.code === 'AUTH_FILE_NOT_FOUND') {
     return 'Hint: pass `--auth-file <path>`, `--env-auth`, or run with browser-session auth (see docs/auth_models.md).';
   }
+  if (error.code === 'AUTH_EXPIRED') {
+    return 'Hint: re-export auth from a logged-in browser: `funliday-auth export --output ./funliday-auth.json` (then ship to your sandbox). See docs/agent_sandbox_setup.md.';
+  }
+  if (error.code === 'NOT_LOGGED_IN') {
+    return 'Hint: visit https://www.funliday.com in the Chrome profile the CLI attached to and log in, then retry.';
+  }
   if (error.code === 'FUNLIDAY_API_ERROR') {
     const message = String(error.message || '');
     if (/ErrorCodeUnknown/.test(message)) {
