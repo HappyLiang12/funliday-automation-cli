@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { ensureFunlidaySessionPage, extractFunlidayAuth, DEFAULT_CDP_ENDPOINT } = require('../auth/browser-session');
-const { createTrip, getTripContainer, getTrip, updateTrip, formatTripDateForApi } = require('../api/client');
+const { createTrip, getTripContainer, getTrip, updateTrip, getTripList, getSharedTripList, formatTripDateForApi } = require('../api/client');
 const { resolveArtifactPath, writeJson } = require('../io/paths');
 const { createExecutionReview, summarizeExecutionReviews } = require('../observability/execution-review');
 const { parseCommonFlags, resolveAuthInput, printCliSuccess } = require('./shared');
@@ -15,7 +15,7 @@ const TRIP_TYPE_ALIASES = {
 };
 
 function printTripUsage() {
-  console.log(`Funliday Trip CLI\n\nUsage:\n  funliday-trip get --trip-id <tripId> [--summary] [--pois] [--output <file>] [--endpoint <url>] [--auth-file <file> | --env-auth] [--quiet]\n  funliday-trip create --name <name> --city-id <cityId> --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD> --trip-type <1/2/3/4/friends> [--output <file>] [--quiet]\n  funliday-trip update --trip-id <tripId> [--name <name>] [--start-date <YYYY-MM-DD>] [--end-date <YYYY-MM-DD>] [--trip-type <1/2/3/4/friends>] [--city-id <cityId>] [--output <file>] [--quiet]\n\nFlags:\n  --summary    write only the essential trip summary (no raw container)\n  --pois       include the POI list (id, name, daySequence, seq, startTime, stayTime, address)\n\nPayload shortcuts:\n  --json '{"tripId":"...","name":"..."}'\n  --file path\\to\\payload.json`);
+  console.log(`Funliday Trip CLI\n\nUsage:\n  funliday-trip list [--output <file>] [--endpoint <url>] [--auth-file <file> | --env-auth] [--quiet]\n  funliday-trip get --trip-id <tripId> [--summary] [--pois] [--output <file>] [--endpoint <url>] [--auth-file <file> | --env-auth] [--quiet]\n  funliday-trip create --name <name> --city-id <cityId> --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD> --trip-type <1/2/3/4/friends> [--output <file>] [--quiet]\n  funliday-trip update --trip-id <tripId> [--name <name>] [--start-date <YYYY-MM-DD>] [--end-date <YYYY-MM-DD>] [--trip-type <1/2/3/4/friends>] [--city-id <cityId>] [--output <file>] [--quiet]\n\nFlags:\n  --summary    write only the essential trip summary (no raw container)\n  --pois       include the POI list (id, name, daySequence, seq, startTime, stayTime, address)\n\nPayload shortcuts:\n  --json '{"tripId":"...","name":"..."}'\n  --file path\\to\\payload.json`);
 }
 
 function normalizeTripType(value) {
@@ -78,6 +78,46 @@ function defaultOutputPath(command) {
   return resolveArtifactPath('active', `funliday_trip_cli_${command}_output.json`);
 }
 
+function formatHhmmFromSeconds(value) {
+  const text = String(value).trim();
+  if (!/^\d+$/.test(text)) return null;
+  const total = Number(text);
+  if (!Number.isInteger(total) || total < 0 || total > 86399) return null;
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function formatHhmmFromHhmm(value) {
+  const text = String(value).trim();
+  if (!/^\d{1,4}$/.test(text)) return null;
+  const padded = text.padStart(4, '0');
+  const hours = Number(padded.slice(0, 2));
+  const minutes = Number(padded.slice(2));
+  if (hours > 23 || minutes > 59) return null;
+  return `${padded.slice(0, 2)}:${padded.slice(2)}`;
+}
+
+/**
+ * "HH:MM" view of when the POI starts.
+ *
+ * `customizeStartTime` is seconds since midnight and wins when present/valid.
+ * `startTime` (4-digit HHMM, e.g. "1100" / "840") is the fallback because the
+ * API does not recompute it after `updatePoiStartTime` — it can be stale.
+ */
+function resolveEffectiveStartTime(poi) {
+  const customize = poi.customizeStartTime;
+  if (customize !== undefined && customize !== null && String(customize).trim() !== '') {
+    const formatted = formatHhmmFromSeconds(customize);
+    if (formatted) return formatted;
+  }
+  const startTime = poi.startTime;
+  if (startTime !== undefined && startTime !== null && String(startTime).trim() !== '') {
+    return formatHhmmFromHhmm(startTime);
+  }
+  return null;
+}
+
 function slimPoi(poi) {
   return {
     id: poi._id,
@@ -86,10 +126,61 @@ function slimPoi(poi) {
     seq: poi.poiSequenceIndex,
     startTime: poi.startTime || null,
     customizeStartTime: poi.customizeStartTime || null,
+    effectiveStartTime: resolveEffectiveStartTime(poi),
     stayTime: poi.stayTime || null,
     address: poi.address || '',
+    location: poi.location
+      ? { lat: poi.location.lat ?? null, lng: poi.location.lng ?? null }
+      : null,
     hasNote: Boolean(poi.textNote),
   };
+}
+
+/**
+ * Unix seconds (UTC midnight, as returned by the trip-list APIs) → "YYYY/MM/DD",
+ * matching the `dateStart`/`dateEnd` format used by `summarizeTripContainer`.
+ */
+function formatDateFromUnixSeconds(value) {
+  const seconds = Number(String(value === undefined || value === null ? '' : value).trim());
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  const date = new Date(seconds * 1000);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10).replace(/-/g, '/');
+}
+
+/**
+ * Slim a `getTripList` / `getSharedTripList` row down to the CLI trip shape.
+ * `endDate` is absent on some rows (e.g. trips whose end was never confirmed);
+ * it is derived from `dayCount` (inclusive days) when possible.
+ */
+function formatListedTrip(trip, { shared = false } = {}) {
+  const source = trip || {};
+  const startSeconds = Number(String(source.startDate || '').trim());
+  const dayCount = Number(source.dayCount);
+  let endSeconds = Number(String(source.endDate || '').trim());
+  if (!Number.isFinite(endSeconds) || endSeconds <= 0) {
+    endSeconds = Number.isFinite(startSeconds) && startSeconds > 0 && Number.isInteger(dayCount) && dayCount > 0
+      ? startSeconds + (dayCount - 1) * 86400
+      : NaN;
+  }
+  return {
+    tripId: source.containerId || source._id || '',
+    name: source.tripName || '',
+    dateStart: formatDateFromUnixSeconds(startSeconds),
+    dateEnd: Number.isFinite(endSeconds) && endSeconds > 0 ? formatDateFromUnixSeconds(endSeconds) : null,
+    dayCount: Number.isInteger(dayCount) && dayCount > 0 ? dayCount : null,
+    shared: Boolean(shared),
+  };
+}
+
+/** Newest first by `dateStart` ("YYYY/MM/DD" sorts lexicographically); entries without a start date go last. */
+function sortTripsNewestFirst(trips) {
+  return [...trips].sort((a, b) => {
+    if (a.dateStart === b.dateStart) return String(a.name).localeCompare(String(b.name));
+    if (!a.dateStart) return 1;
+    if (!b.dateStart) return -1;
+    return a.dateStart < b.dateStart ? 1 : -1;
+  });
 }
 
 function parseTripArgs(argv) {
@@ -149,6 +240,10 @@ async function resolveAuth(parsed) {
 }
 
 function buildSummaryLine(command, result) {
+  if (command === 'list') {
+    const trips = (result && result.trips) || [];
+    return `OK: ${trips.length} trips`;
+  }
   if (command === 'get') {
     const s = result.summary || {};
     const poiCount = result.pois ? ` · ${result.pois.length} POIs` : '';
@@ -171,7 +266,7 @@ async function runTripCli(argv) {
     printTripUsage();
     return { ok: true, command: 'help' };
   }
-  if (!['get', 'create', 'update'].includes(parsed.command)) throw new Error(`Unsupported command: ${parsed.command}`);
+  if (!['get', 'create', 'update', 'list'].includes(parsed.command)) throw new Error(`Unsupported command: ${parsed.command}`);
 
   const outputPath = parsed.outputPath || defaultOutputPath(parsed.command);
   const payload = readPayloadFromInput(parsed);
@@ -187,6 +282,24 @@ async function runTripCli(argv) {
 
     let result = null;
     let resolvedPayload = null;
+
+    if (parsed.command === 'list') {
+      const [owned, shared] = await Promise.all([
+        getTripList({ auth }),
+        getSharedTripList({ auth }),
+      ]);
+      const trips = sortTripsNewestFirst([
+        ...owned.trips.map((trip) => formatListedTrip(trip, { shared: false })),
+        ...shared.trips.map((trip) => formatListedTrip(trip, { shared: true })),
+      ]);
+      result = {
+        trips,
+        totalCount: trips.length,
+        ownedCount: owned.trips.length,
+        sharedCount: shared.trips.length,
+      };
+      addReview({ domain: 'funliday-trip-cli', operation: 'listTrips', ok: true, context: { endpoint: parsed.endpoint, ownedCount: result.ownedCount, sharedCount: result.sharedCount }, signals: { sharedHelperUsed: true } });
+    }
 
     if (parsed.command === 'get') {
       const tripId = parsed.tripId || payload.tripId || payload.id || '';
@@ -262,6 +375,9 @@ module.exports = {
   ensureCreatePayload,
   readPayloadFromInput,
   slimPoi,
+  formatDateFromUnixSeconds,
+  formatListedTrip,
+  sortTripsNewestFirst,
   buildSummaryLine,
   runTripCli,
 };

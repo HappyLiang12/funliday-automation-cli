@@ -3,6 +3,7 @@ const { FunlidayCliError } = require('../errors');
 
 const FUNLIDAY_API_BASE = 'https://www.funlidays.com/api';
 const FUNLIDAY_NEXT_API_BASE = `${FUNLIDAY_URL}/api/next`;
+const FUNLIDAY_PROXY_API_BASE = `${FUNLIDAY_URL}/proxy`;
 const POIBANK_API_BASE = 'https://api.poibank.com';
 
 function createLogger() {
@@ -344,6 +345,38 @@ async function getTrip({ auth, tripId, log }) {
   })).results;
 }
 
+function mapTripListResults(apiName, data) {
+  const results = data && data.results;
+  if (!results || !Array.isArray(results.trips)) {
+    throw new FunlidayCliError('FUNLIDAY_API_ERROR', `${apiName} returned an unexpected payload (missing results.trips).`);
+  }
+  return {
+    totalCount: Number(results.totalCount) || results.trips.length,
+    skip: Number(results.skip) || 0,
+    trips: results.trips,
+  };
+}
+
+async function getTripList({ auth, skip = 0, limit = 100, log }) {
+  const data = await callFunlidayApi({
+    auth,
+    apiName: 'getTripList',
+    body: { deviceId: auth.deviceId, skip: String(skip), limit: String(limit) },
+    log,
+  });
+  return mapTripListResults('getTripList', data);
+}
+
+async function getSharedTripList({ auth, skip = 0, limit = 100, log }) {
+  const data = await callFunlidayApi({
+    auth,
+    apiName: 'getSharedTripList',
+    body: { deviceId: auth.deviceId, skip: String(skip), limit: String(limit) },
+    log,
+  });
+  return mapTripListResults('getSharedTripList', data);
+}
+
 async function deletePois({ auth, tripId, idArray, revision, log }) {
   return callFunlidayApi({
     auth,
@@ -424,6 +457,11 @@ async function postTextNote({ auth, tripId, poiId, textNote, textNoteObjectId, l
   return callFunlidayApi({ auth, apiName: 'postTextNote', body, log });
 }
 
+function isPoibankPlaceholderRow(row) {
+  if (!row || typeof row !== 'object') return false;
+  return row.id === 99999999 || row.id === '99999999' || row.name === 'Please upgrade App';
+}
+
 async function searchPoibank({ auth, keyword, limit = 10, offset = 0 }) {
   if (!auth.poibankToken) {
     throw new FunlidayCliError('POIBANK_TOKEN_MISSING', 'Poibank token is missing from the provided auth context.');
@@ -461,11 +499,126 @@ async function searchPoibank({ auth, keyword, limit = 10, offset = 0 }) {
     );
   }
 
+  const results = data && Array.isArray(data.data) ? data.data : [];
+  if (results.length > 0 && results.every(isPoibankPlaceholderRow)) {
+    throw new FunlidayCliError(
+      'POIBANK_ACCESS_UPGRADE_REQUIRED',
+      `Poibank returned ${results.length} placeholder rows ("Please upgrade App") for keyword "${keyword}". The poibank token available to web sessions does not grant real POI data; POI search is unavailable with this token.`,
+      {
+        url,
+        httpStatus: res.status,
+        placeholderCount: results.length,
+        hint: 'api.poibank.com only returns real POI data for upgraded App credentials; re-login or an App-issued token will not change this. Use trip-based endpoints (funliday-api / funliday-mutate) instead of poibank search.',
+        responseText: text.slice(0, 500),
+      },
+    );
+  }
+
   return {
     url,
     status: res.status,
     text,
+    results,
   };
+}
+
+// --- City search (proxy/v2/autocomplete) ---
+
+/**
+ * The autocomplete `name` fields wrap matched substrings in <FUNLIDAY_SEARCH>
+ * tags (site-side highlight markup); strip them for CLI output.
+ */
+function stripSearchTags(value) {
+  return String(value || '').replace(/<\/?FUNLIDAY_SEARCH>/g, '').trim();
+}
+
+/** "zh_tw" -> "zh-TW" for the Accept-Language header that drives result language. */
+function toAcceptLanguage(language) {
+  const text = String(language || '').trim();
+  const parts = text.split(/[-_]/).filter(Boolean);
+  if (parts.length >= 2) return `${parts[0].toLowerCase()}-${parts[1].toUpperCase()}`;
+  return parts[0] ? parts[0].toLowerCase() : 'zh-TW';
+}
+
+function slimCityResult(item) {
+  const extras = (item && item.extras && item.extras.city) || {};
+  const city = extras.city || {};
+  const name = stripSearchTags(city.name) || stripSearchTags(item && item.name);
+  const displayParts = [
+    name,
+    extras.parent ? extras.parent.name : '',
+    extras.country ? extras.country.name : '',
+  ].filter(Boolean);
+  const location = extras.location && typeof extras.location === 'object'
+    ? { lat: Number(extras.location.lat), lng: Number(extras.location.lng) }
+    : null;
+  return {
+    cityId: city.id ? String(city.id) : '',
+    name,
+    nameAlias: city.name_alias || (item && item.name_alias) || '',
+    displayName: displayParts.join(', '),
+    location,
+    countryId: extras.country ? String(extras.country.id) : '',
+    countryName: extras.country ? extras.country.name : '',
+    parentId: extras.parent ? String(extras.parent.id) : '',
+    parentName: extras.parent ? extras.parent.name : '',
+  };
+}
+
+/**
+ * Search Funliday's city list via the site's autocomplete proxy.
+ *
+ * `auth` is optional: the endpoint answers anonymously, but session headers are
+ * forwarded when provided (works with an `--auth-file`, so sandboxes can use it).
+ * Result name language follows `Accept-Language` (the `language` query param is
+ * ignored server-side), derived from `auth.language` / `FUNLIDAY_DEFAULT_LANGUAGE`.
+ */
+async function searchCities({ auth, keyword, log }) {
+  const text = String(keyword || '').trim();
+  if (!text) throw new FunlidayCliError('INVALID_INPUT', 'searchCities requires a non-empty `keyword`.');
+
+  const language = (auth && auth.language) || process.env.FUNLIDAY_DEFAULT_LANGUAGE || 'zh_tw';
+  const url = `${FUNLIDAY_PROXY_API_BASE}/v2/autocomplete?q=${encodeURIComponent(text)}&type=city`;
+  const headers = {
+    accept: 'application/json, text/plain, */*',
+    'accept-language': toAcceptLanguage(language),
+    origin: FUNLIDAY_URL,
+    referer: `${FUNLIDAY_URL}/me/trips`,
+  };
+  if (auth && auth.cookie) headers.cookie = auth.cookie;
+  if (auth && auth.authorization) headers.authorization = auth.authorization;
+
+  const res = await fetch(url, { headers });
+  const bodyText = Buffer.from(await res.arrayBuffer()).toString('utf8');
+
+  if (log) log('proxyApi', { route: 'v2/autocomplete', keyword: text, httpStatus: res.status });
+
+  if (res.status !== 200) {
+    throwApiError({
+      route: 'proxy/v2/autocomplete',
+      httpStatus: res.status,
+      status: 'NO_STATUS',
+      text: bodyText,
+      code: 'FUNLIDAY_PROXY_API_ERROR',
+    });
+  }
+
+  let data = null;
+  try {
+    data = JSON.parse(bodyText);
+  } catch {
+    // handled below
+  }
+  if (!Array.isArray(data)) {
+    throw new FunlidayCliError('FUNLIDAY_PROXY_API_ERROR', `proxy/v2/autocomplete returned a non-array payload: ${bodyText.slice(0, 300)}`);
+  }
+
+  const results = data
+    .filter((item) => item && item.type === 2)
+    .map(slimCityResult)
+    .filter((city) => city.cityId);
+
+  return { url, status: res.status, results };
 }
 
 module.exports = {
@@ -482,6 +635,9 @@ module.exports = {
   updateTrip,
   createTrip,
   getTrip,
+  getTripList,
+  getSharedTripList,
+  searchCities,
   deletePois,
   addCustomPoi,
   updatePoiStartTime,

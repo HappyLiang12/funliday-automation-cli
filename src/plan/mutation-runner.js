@@ -13,6 +13,7 @@ const { ensureFunlidaySessionPage, extractFunlidayAuth } = require('../auth/brow
 const { resolveArtifactPath, writeJson } = require('../io/paths');
 const { findPois, resolveSinglePoi, sortBySequence } = require('./selector');
 const { validateMutationPlan } = require('./validator');
+const { normalizeStartTimeToSeconds } = require('./time');
 const { createExecutionReview, summarizeExecutionReviews } = require('../observability/execution-review');
 const { normalizeAuth } = require('../auth/env-auth');
 
@@ -64,6 +65,37 @@ function toTripLikeSummary(trip) {
 function nextSyntheticId(state, prefix = 'dryrun-poi') {
   state.syntheticCounter += 1;
   return `${prefix}-${state.syntheticCounter}`;
+}
+
+function hasStartTimeValue(value) {
+  return value !== undefined && value !== null && String(value).trim() !== '';
+}
+
+/**
+ * Extracts the created POI id from an addPoi adapter response.
+ *
+ * The Funliday web app reads the created POI from `response.results.poi`
+ * (see ADD_POI_SUCCESS handling in the site bundle), and `results` also
+ * carries `revision`. Older/other shapes are probed as fallbacks; when no
+ * id can be found the caller falls back to name-based detection.
+ */
+function extractAddedPoiId(response) {
+  if (!response || typeof response !== 'object') return null;
+  const results = response.results;
+  const candidates = [
+    results && results.poi && results.poi._id,
+    results && results.poi && results.poi.id,
+    results && results._id,
+    results && results.id,
+    results && results.poiId,
+    // Some endpoints wrap the payload one level deeper.
+    response.data && response.data.results && response.data.results.poi && response.data.results.poi._id,
+    response.data && response.data.results && response.data.results._id,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate) return candidate;
+  }
+  return null;
 }
 
 function mutateVirtualTrip(state, updater) {
@@ -207,6 +239,8 @@ async function opDeletePois(operation, state) {
 async function opAddCustomPoi(operation, state) {
   const trip = await ensureTrip(state);
   const beforeIds = new Set(trip.pois.map((poi) => poi._id));
+  const hasRequestedStartTime = hasStartTimeValue(operation.poi.customizeStartTime);
+  const normalizedStartTime = hasRequestedStartTime ? normalizeStartTimeToSeconds(operation.poi.customizeStartTime) : null;
 
   if (state.dryRun) {
     const created = {
@@ -215,7 +249,7 @@ async function opAddCustomPoi(operation, state) {
       daySequence: Number(operation.daySequence),
       poiSequenceIndex: 9999,
       startTime: null,
-      customizeStartTime: null,
+      customizeStartTime: normalizedStartTime,
       stayTime: String(operation.poi.stayTime),
       address: operation.poi.address,
       location: clone(operation.poi.location),
@@ -225,17 +259,24 @@ async function opAddCustomPoi(operation, state) {
       virtualTrip.pois.push(created);
       ensureVirtualDayOrder(state, operation.daySequence);
     });
-    const inserted = state.trip.pois.find((poi) => !beforeIds.has(poi._id) && poi.name === operation.poi.name);
-    if (operation.alias) state.aliases[operation.alias] = inserted._id;
+    if (operation.alias) state.aliases[operation.alias] = created._id;
+    if (hasRequestedStartTime) {
+      await opUpdatePoiStartTime({
+        type: 'updatePoiStartTime',
+        selector: { id: created._id },
+        customizeStartTime: normalizedStartTime,
+        stayTime: created.stayTime,
+      }, state);
+    }
     return {
       type: operation.type,
       alias: operation.alias || null,
       dryRun: true,
-      poi: summarizePoi(inserted),
+      poi: summarizePoi(created),
     };
   }
 
-  await state.adapters.addCustomPoi({
+  const response = await state.adapters.addCustomPoi({
     auth: state.auth,
     tripId: state.tripId,
     daySequence: operation.daySequence,
@@ -244,9 +285,23 @@ async function opAddCustomPoi(operation, state) {
     log: state.log,
   });
   const updatedTrip = await refreshTrip(state);
-  const created = updatedTrip.pois.find((poi) => !beforeIds.has(poi._id) && poi.name === operation.poi.name);
+  const responsePoiId = extractAddedPoiId(response);
+  let created = responsePoiId ? updatedTrip.pois.find((poi) => poi._id === responsePoiId) || null : null;
+  if (!created) {
+    created = updatedTrip.pois.find((poi) => !beforeIds.has(poi._id) && poi.name === operation.poi.name);
+  }
   if (!created) throw new Error(`Failed to detect added POI: ${operation.poi.name}`);
   if (operation.alias) state.aliases[operation.alias] = created._id;
+
+  if (hasRequestedStartTime) {
+    await opUpdatePoiStartTime({
+      type: 'updatePoiStartTime',
+      selector: { id: created._id },
+      customizeStartTime: normalizedStartTime,
+      stayTime: created.stayTime,
+    }, state);
+    created = state.trip.pois.find((poi) => poi._id === created._id) || created;
+  }
 
   return {
     type: operation.type,
@@ -258,7 +313,8 @@ async function opAddCustomPoi(operation, state) {
 async function opUpdatePoiStartTime(operation, state) {
   const trip = await ensureTrip(state);
   const poi = resolveSinglePoi(trip, operation.selector || operation.alias || operation.name, state, { label: 'updatePoiStartTime' });
-  const customizeStartTime = operation.customizeStartTime !== undefined ? operation.customizeStartTime : (poi.customizeStartTime || poi.startTime);
+  const requestedStartTime = operation.customizeStartTime !== undefined ? operation.customizeStartTime : (poi.customizeStartTime || poi.startTime);
+  const customizeStartTime = normalizeStartTimeToSeconds(requestedStartTime);
   const stayTime = operation.stayTime !== undefined ? operation.stayTime : poi.stayTime;
 
   if (!state.dryRun) {
@@ -344,6 +400,10 @@ async function opRebuildDaySegmentInOrder(operation, state) {
     const fallbackPoi = item.fallbackPoi || {};
     const noteText = await maybeReadNoteText(state, livePoi, item.preserveNote !== false);
 
+    let customizeStartTime = '';
+    if (livePoi && hasStartTimeValue(livePoi.customizeStartTime)) customizeStartTime = normalizeStartTimeToSeconds(livePoi.customizeStartTime);
+    else if (hasStartTimeValue(fallbackPoi.customizeStartTime)) customizeStartTime = normalizeStartTimeToSeconds(fallbackPoi.customizeStartTime);
+
     itemSnapshots.push({
       alias: item.alias || item.key || null,
       name: item.name || (livePoi && livePoi.name) || fallbackPoi.name,
@@ -351,7 +411,7 @@ async function opRebuildDaySegmentInOrder(operation, state) {
       address: livePoi ? livePoi.address : fallbackPoi.address,
       location: livePoi ? livePoi.location : fallbackPoi.location,
       stayTime: livePoi && livePoi.stayTime ? String(livePoi.stayTime) : String(fallbackPoi.stayTime || ''),
-      customizeStartTime: livePoi && livePoi.customizeStartTime ? String(livePoi.customizeStartTime) : String(fallbackPoi.customizeStartTime || ''),
+      customizeStartTime,
       noteText,
       preserveNote: item.preserveNote !== false,
       required: item.required !== false,
@@ -385,12 +445,14 @@ async function opRebuildDaySegmentInOrder(operation, state) {
         },
       }, state);
       const poiId = addResult.poi.id;
-      await opUpdatePoiStartTime({
-        type: 'updatePoiStartTime',
-        selector: item.alias ? { alias: item.alias } : { id: poiId },
-        customizeStartTime: item.customizeStartTime,
-        stayTime: item.stayTime,
-      }, state);
+      if (hasStartTimeValue(item.customizeStartTime)) {
+        await opUpdatePoiStartTime({
+          type: 'updatePoiStartTime',
+          selector: item.alias ? { alias: item.alias } : { id: poiId },
+          customizeStartTime: item.customizeStartTime,
+          stayTime: item.stayTime,
+        }, state);
+      }
       if (item.noteText && item.preserveNote) {
         await opPostNote({
           type: 'postNote',

@@ -82,7 +82,8 @@
         "name": { "type": "string" },
         "address": { "type": "string" },
         "location": { "$ref": "#/$defs/location" },
-        "stayTime": { "type": ["string", "integer"] }
+        "stayTime": { "type": ["string", "integer"] },
+        "customizeStartTime": { "type": ["string", "integer"], "description": "Seconds since midnight (e.g. \"39600\") or \"HH:MM\" (e.g. \"11:00\"). Canonical unit is seconds since midnight." }
       }
     },
     "operation": {

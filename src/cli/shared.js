@@ -79,6 +79,9 @@ function remediationFor(error) {
   if (error.code === 'NOT_LOGGED_IN') {
     return 'Hint: visit https://www.funliday.com in the Chrome profile the CLI attached to and log in, then retry.';
   }
+  if (error.code === 'POIBANK_ACCESS_UPGRADE_REQUIRED') {
+    return 'Hint: real POI data is unavailable with a web-session poibank token (placeholder rows). Use trip-based endpoints instead of poibank search.';
+  }
   if (error.code === 'FUNLIDAY_API_ERROR') {
     const message = String(error.message || '');
     if (/ErrorCodeUnknown/.test(message)) {

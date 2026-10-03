@@ -56,6 +56,24 @@ The CLI is a thin pass-through to the Funliday private API. **Trip-targeting end
 
 If a call returns `HTTP 200 / "status":"000" / "message":"ErrorCodeUnknown"`, the most likely cause is a missing or misnamed body field. Run with `--debug` to see the request/response trace.
 
+## `funliday-trip get --pois` slim POI shape
+
+Each entry in `result.pois[]` uses the stable slim form below:
+
+| Field | Description |
+|---|---|
+| `id` | POI id (`_id` upstream). |
+| `name` | POI name. |
+| `daySequence` | Day number (number). |
+| `seq` | `poiSequenceIndex`. |
+| `startTime` | Raw upstream `startTime` (4-digit HHMM, e.g. `"1100"` / `"840"`); can be stale after `updatePoiStartTime`. |
+| `customizeStartTime` | Raw upstream `customizeStartTime` (seconds since midnight) or `null`. |
+| `effectiveStartTime` | `"HH:MM"` view of when the POI starts: from `customizeStartTime` (seconds) when present/valid, else decoded from `startTime` (HHMM), else `null`. Use this — `startTime` is NOT recomputed by `updatePoiStartTime`. |
+| `stayTime` | Stay duration in seconds (string) or `null`. |
+| `address` | Address string (may be empty). |
+| `location` | `{ lat, lng }` or `null` when the upstream POI has no location. |
+| `hasNote` | `true` when a text note exists. |
+
 ## Safe read-only workflows
 
 Safest operations to use first:
@@ -70,6 +88,6 @@ Safest operations to use first:
 | Output | Stable? |
 |---|---|
 | `summary` field shape on `funliday-trip get` | Yes |
-| `pois[]` field shape on `funliday-trip get --pois` | Yes (slim form: `id, name, daySequence, seq, startTime, customizeStartTime, stayTime, address, hasNote`) |
+| `pois[]` field shape on `funliday-trip get --pois` | Yes (slim form: `id, name, daySequence, seq, startTime, customizeStartTime, effectiveStartTime, stayTime, address, location, hasNote`) |
 | `container` field (raw upstream payload) | No — passes through whatever Funliday returns |
 | `executionReviewSummary` | Internal; do not parse in agents |
