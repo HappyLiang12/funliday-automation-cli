@@ -19,6 +19,7 @@
   "bin": {
     "funliday": "bin/funliday.js",
     "funliday-trip": "bin/funliday-trip.js",
+    "funliday-city": "bin/funliday-city.js",
     "funliday-mutate": "bin/funliday-mutate.js",
     "funliday-plan-validate": "bin/funliday-plan-validate.js",
     "funliday-api": "bin/funliday-api.js",

@@ -88,12 +88,25 @@ Suppress the success line with `--quiet`. Get full stack traces with `--debug`.
 
 ## The four flows you actually need
 
+### 0. Discover trip ids and city ids
+
+```bash
+npx funliday-trip list --auth-file ./funliday-auth.json
+# OK: 9 trips → ./artifacts/active/funliday_trip_cli_list_output.json
+
+npx funliday-city search 沖繩
+# 23120225 沖繩縣, 日本 (lat 26.213854, lng 127.6922209)
+# OK: city "沖繩" → 2 results → ./artifacts/active/funliday_city_search_output.json
+```
+
+`funliday-trip list` writes `{ trips: [{ tripId, name, dateStart, dateEnd, dayCount, shared }] }` (owned + shared, newest first — the same set the website shows on `/me/trips`). `funliday-city search <keyword>` matches city names/aliases (zh + en) and prints `<cityId> <name>[, <parent>][, <country>] (lat, lng)`; feed the `cityId` to `funliday-trip create --city-id`. City search needs no auth (session headers are forwarded when `--auth-file` / `--env-auth` is given).
+
 ### 1. Read a trip
 
 ```bash
 npx funliday-trip get --trip-id <tripId> --summary --pois
 ```
-Artifact contains `{ tripId, summary: { name, dateStart, dateEnd, tripType, ... }, pois: [{ id, name, daySequence, seq, startTime, customizeStartTime, stayTime, address, hasNote }] }`.
+Artifact contains `{ tripId, summary: { name, dateStart, dateEnd, tripType, ... }, pois: [{ id, name, daySequence, seq, startTime, customizeStartTime, effectiveStartTime, stayTime, address, location, hasNote }] }`.
 
 Drop `--summary` to also get the raw `container`. `--pois` adds the slim POI list.
 
@@ -138,13 +151,14 @@ Everything is JSON. Operations execute in array order.
         "name": "POI name",
         "address": "...",
         "location": { "lat": 31.24, "lng": 121.49 },
-        "stayTime": "1800"
+        "stayTime": "1800",
+        "customizeStartTime": "20:00"
       }
     },
     {
       "type": "updatePoiStartTime",
       "selector": { "alias": "myNewPoi" },
-      "customizeStartTime": "2000",
+      "customizeStartTime": "20:00",
       "stayTime": "1800"
     },
     {
@@ -161,6 +175,10 @@ Everything is JSON. Operations execute in array order.
 }
 ```
 
+`customizeStartTime`: the API's canonical unit is **seconds since midnight** (`20:00` = `"72000"`). Plans may instead use `"HH:MM"` (e.g. `"20:00"`), which `funliday-mutate` converts to seconds before calling the API. Plain digit values are always treated as seconds — `"1100"` is NOT auto-converted from HHMM. `addCustomPoi` accepts `poi.customizeStartTime`; `rebuildDaySegmentInOrder` items may carry it via `fallbackPoi.customizeStartTime` for brand-new POIs.
+
+Keep POI names unique per day where possible: selectors match by name (and the fallback path for detecting a just-added POI matches by name when the API response id is unavailable), so duplicate names can make plans ambiguous.
+
 Operation types: `readTrip`, `assertDayOrder`, `deletePois`, `addCustomPoi`, `updatePoiStartTime`, `postNote`, `rebuildDaySegmentInOrder`.
 
 Selector grammar: `alias`, `id`/`idIn`, `name`/`nameContains`/`nameStartsWith`/`nameEndsWith`/`nameRegex`, `daySequence`/`daySequenceIn`, `seq`/`seqGte`/`seqLte`, `startTime`/`startTimeGte`/`startTimeLte`, `stayTime`/`stayTimeGte`/`stayTimeLte`, `hasNote`. Compose with `any[]` / `all[]` / `not`. Cardinality: `first`, `last`, `nth`, `limit`. Full doc: `docs/selector_dsl.md`.
@@ -174,7 +192,9 @@ Selector grammar: `alias`, `id`/`idIn`, `name`/`nameContains`/`nameStartsWith`/`
 | `Error [NOT_LOGGED_IN]` | Connected to Chrome but no Funliday session in that profile | Log in to Funliday in the Chrome window the CLI attached to. |
 | `Error [AUTH_FILE_NOT_FOUND]` | `--auth-file` path is wrong | Resolve relative to the *current working directory*, not the repo root. |
 | `Error [AUTH_EXPIRED]` | Funliday rejected the credentials (HTTP 401/403 or known error pattern) | Re-export auth from a logged-in browser: `funliday-auth export`. See `docs/agent_sandbox_setup.md` Stage 4. |
-| `customizeStartTime` ignored on UI | Funliday auto-recomputes `startTime` based on stay times. `customizeStartTime` is the user override; the UI shows whichever applies. | Set `customizeStartTime` only when you want to pin a specific time. |
+| Start time shows 00:18 (or another nonsense hour) on the site | `customizeStartTime` was sent as HHMM (`"1100"`) instead of seconds since midnight (`"39600"`) | Use seconds since midnight — that is the canonical API unit; `"HH:MM"` strings are also accepted and converted by `funliday-mutate`. |
+| `startTime` looks stale in read-backs after `updatePoiStartTime` | The derived `startTime` field is NOT recomputed by `updatePoiStartTime`; the UI displays `customizeStartTime` when present | Read `customizeStartTime` (seconds) for the effective value; use `effectiveStartTime` ("HH:MM") from `funliday-trip get --pois`. |
+| `Error [POIBANK_ACCESS_UPGRADE_REQUIRED]` | Web-session poibank tokens return placeholder rows (`"Please upgrade App"`) instead of real POI data | Real poibank search data is unavailable with this token; use trip-based endpoints. |
 
 ## Safety
 

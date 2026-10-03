@@ -80,6 +80,17 @@ npx funliday-trip get --trip-id <tripId> --summary --pois
 
 Drop `--summary` to also include the raw `container` payload; drop `--pois` to skip the per-POI list.
 
+### List your trips / find a city id
+```bash
+npx funliday-trip list --auth-file ./funliday-auth.json
+# OK: 9 trips → ./artifacts/active/funliday_trip_cli_list_output.json
+
+npx funliday-city search 沖繩
+# 23120225 沖繩縣, 日本 (lat 26.213854, lng 127.6922209)
+# OK: city "沖繩" → 2 results → ./artifacts/active/funliday_city_search_output.json
+```
+`funliday-trip list` returns each trip's `tripId` / `name` / `dateStart` / `dateEnd` (owned + shared trips, newest first) — the id to use with `funliday-trip get`. `funliday-city search` resolves the `cityId` needed by `funliday-trip create --city-id` (works anonymously; session headers are used when `--auth-file` is provided).
+
 ### Dry-run a plan offline (no auth, no network)
 ```bash
 # 1. Save a snapshot once
@@ -101,6 +112,7 @@ npx funliday-mutate run plan.json
 npx funliday-poibank "上海 蟹粉" --output ./artifacts/poibank.json
 # OK: poibank "上海 蟹粉" → 10 results → ./artifacts/poibank.json
 ```
+In `--auth-file` mode the auth file must include the poibank token (`funliday-auth export --include-tokens`).
 
 ### Call a raw API endpoint
 ```bash
@@ -113,7 +125,8 @@ The CLI auto-rewrites `tripId → parseTripObjectId` for known trip-targeting en
 
 - `funliday` — combined dispatcher
 - `funliday-auth` — export auth.json for sandboxed/CI use; check current auth
-- `funliday-trip` — get / create / update trips
+- `funliday-trip` — list / get / create / update trips
+- `funliday-city` — search Funliday cities (id + name lookup for trip create)
 - `funliday-mutate` — run / validate mutation plans
 - `funliday-plan-validate` — alias for `funliday-mutate validate`
 - `funliday-api` — raw POST to a named Funliday endpoint

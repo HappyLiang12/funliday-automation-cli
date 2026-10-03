@@ -1,3 +1,5 @@
+const { isValidStartTimeValue } = require('./time');
+
 const ALLOWED_TOP_LEVEL_FIELDS = new Set(['version', 'description', 'tripId', 'endpoint', 'outputPath', 'operations', 'tripSnapshot']);
 const SELECTOR_LEAF_FIELDS = new Set([
   'alias', 'id', 'idIn', 'name', 'nameIn', 'nameContains', 'nameStartsWith', 'nameEndsWith', 'nameRegex', 'nameRegexFlags',
@@ -91,6 +93,9 @@ function validatePoiPayload(poi, path, errors) {
     if (typeof poi.location.lat !== 'number') pushError(errors, `${path}.location.lat`, 'lat must be a number.');
     if (typeof poi.location.lng !== 'number') pushError(errors, `${path}.location.lng`, 'lng must be a number.');
   }
+  if (poi.customizeStartTime !== undefined && poi.customizeStartTime !== null && poi.customizeStartTime !== '' && !isValidStartTimeValue(poi.customizeStartTime)) {
+    pushError(errors, `${path}.customizeStartTime`, '`customizeStartTime` must be seconds since midnight (integer or numeric string) or "HH:MM".');
+  }
 }
 
 function validateOperation(operation, index, errors) {
@@ -137,6 +142,9 @@ function validateOperation(operation, index, errors) {
     const hasTarget = operation.selector !== undefined || operation.alias !== undefined || operation.name !== undefined;
     if (!hasTarget) pushError(errors, path, 'updatePoiStartTime requires selector, alias, or name.');
     if (operation.selector !== undefined) validateSelector(operation.selector, `${path}.selector`, errors);
+    if (operation.customizeStartTime !== undefined && operation.customizeStartTime !== null && operation.customizeStartTime !== '' && !isValidStartTimeValue(operation.customizeStartTime)) {
+      pushError(errors, `${path}.customizeStartTime`, '`customizeStartTime` must be seconds since midnight (integer or numeric string) or "HH:MM".');
+    }
   }
 
   if (operation.type === 'postNote') {

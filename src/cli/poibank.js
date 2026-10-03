@@ -49,10 +49,7 @@ async function runPoibankCli(argv) {
       ...result,
     };
     writeJson(outputPath, payload);
-    const count = Array.isArray(result.results) ? result.results.length
-      : Array.isArray(result.pois) ? result.pois.length
-      : Array.isArray(result.data) ? result.data.length
-      : 'unknown';
+    const count = Array.isArray(result.results) ? result.results.length : 'unknown';
     printCliSuccess(`OK: poibank "${parsed.keyword}" → ${count} results → ${outputPath}`, { quiet: parsed.quiet });
     return payload;
   } finally {
